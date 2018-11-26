@@ -1,0 +1,112 @@
+---
+kind: Template
+apiVersion: v1
+metadata:
+  name: gluster-s3-gateway
+objects:
+  - kind: BuildConfig
+    apiVersion: v1
+    metadata:
+      name: gluster-s3-gateway
+      annotations:
+        description: |
+          Swift gateway for CNS emulating S3 API with support for
+          Signature Version 4
+    spec:
+      source:
+        type: Git
+        git:
+          uri: "${SOURCE_REPOSITORY_URL}"
+          ref: "${SOURCE_REPOSITORY_REF}"
+        contextDir: "${CONTEXT_DIR}"
+      triggers:
+        - type: ImageChange
+        - type: ConfigChange
+      strategy:
+        type: Docker
+        dockerStrategy:
+          from":
+            kind: ImageStreamTag
+            name: registry.access.redhat.com/rhel7:latest
+      output:
+        to:
+          kind: ImageStreamTag
+          name: gluster-s3-gateway
+
+  - kind: ImageStream
+    apiVersion: v1
+    metadata:
+      name: gluster-s3-gateway
+    status:
+      dockerImageRepository: ""
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: gluster-s3-gateway
+      labels:
+        app: swift-proxy
+    spec:
+      ports:
+        - port: 8080
+          name: swift-proxy
+      clusterIP: None
+      selector:
+        app: swift-proxy
+
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: gluster-s3-gateway
+    spec:
+      serviceName: "swift-proxy"
+      replicas: 1
+      selector:
+        matchLabels:
+          app: swift-proxy
+      template:
+        metadata:
+          labels:
+            app: swift-proxy
+        spec:
+          containers:
+            - name: nginx
+              image: gluster-s3-gateway:latest
+              ports:
+                - containerPort: 8080
+                  name: swift-proxy
+              volumeMounts:
+                - name: s3buckets
+                  mountPath: /mnt/gluster-object
+      volumeClaimTemplates:
+        - metadata:
+            name: s3buckets
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: "${BUCKETS_STORAGE_SIZE}"
+
+parameters:
+  - name: SOURCE_REPOSITORY_URL
+    displayName: Source Repository URL
+    description: The URL of the repository with your application source code
+    value: https://github.com/miminar/gluster-s3-gateway.git
+    required: true
+  - name: BUCKETS_STORAGE_SIZE
+    displayName: Buckets Storage Size
+    description: Size of persistent volumes allocated for all buckets
+    value: 30Gi
+    required: true
+  - name: CONTEXT_DIR
+    displayName: Context Directory
+    description: |
+      Context directory inside of SOURCE_REPOSITORY_URL
+      needed to build the image
+    value: osapp
+    required: true
+  - name: INITIAL_BUCKET
+    displayName: Initial bucket name
+    description: |
+      Name of the initial bucket. If unset, no bucket will be created.
+message: "TODO: lorem ipsum"
