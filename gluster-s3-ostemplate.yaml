@@ -31,7 +31,7 @@ objects:
       output:
         to:
           kind: ImageStreamTag
-          name: gluster-s3-gateway
+          name: gluster-s3-gateway:latest
 
   - kind: ImageStream
     apiVersion: v1
@@ -54,38 +54,57 @@ objects:
       selector:
         app: swift-proxy
 
-  - apiVersion: apps/v1
-    kind: StatefulSet
+  - apiVersion: v1
+    kind: DeploymentConfig
     metadata:
       name: gluster-s3-gateway
     spec:
-      serviceName: "swift-proxy"
+      serviceName: swift-proxy
       replicas: 1
       selector:
-        matchLabels:
-          app: swift-proxy
+        app: swift-proxy
       template:
         metadata:
           labels:
             app: swift-proxy
+          name: "swift-proxy"
         spec:
           containers:
-            - name: nginx
-              image: gluster-s3-gateway:latest
+            - name: gluster-s3-gateway
+              image: " "
               ports:
                 - containerPort: 8080
                   name: swift-proxy
               volumeMounts:
                 - name: s3buckets
                   mountPath: /mnt/gluster-object
-      volumeClaimTemplates:
-        - metadata:
-            name: s3buckets
-          spec:
-            accessModes: ["ReadWriteOnce"]
-            resources:
-              requests:
-                storage: "${BUCKETS_STORAGE_SIZE}"
+          volumes:
+            - name: s3buckets
+              persistentVolumeClaim:
+                claimName: "gluster-s3-gateway-buckets"
+      triggers:
+        - type: ImageChange
+          imageChangeParams:
+            automatic: true
+            containerNames:
+              - gluster-s3-gateway
+            from:
+              kind: ImageStreamTag
+              name: gluster-s3-gateway:latest
+        - type: ConfigChange
+      strategy:
+        type: Rolling
+
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: gluster-s3-gateway-buckets
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: "${BUCKETS_CAPACITY}"
 
 parameters:
   - name: SOURCE_REPOSITORY_URL
@@ -93,7 +112,11 @@ parameters:
     description: The URL of the repository with your application source code
     value: https://github.com/miminar/gluster-s3-gateway.git
     required: true
-  - name: BUCKETS_STORAGE_SIZE
+  - name: SOURCE_REPOSITORY_REF
+    displayName: Git Repository Reference
+    value: master
+    required: true
+  - name: BUCKETS_CAPACITY
     displayName: Buckets Storage Size
     description: Size of persistent volumes allocated for all buckets
     value: 30Gi
