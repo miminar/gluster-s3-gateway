@@ -4,6 +4,8 @@ apiVersion: v1
 metadata:
   name: gluster-s3-gateway
 objects:
+
+  # swift-proxy -------------------------------------------------------------
   - kind: BuildConfig
     apiVersion: v1
     metadata:
@@ -32,6 +34,16 @@ objects:
         to:
           kind: ImageStreamTag
           name: gluster-s3-gateway:latest
+
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: gluster-s3-gateway
+    stringData:
+      keystonedb-password: ${KEYSTONEDB_PASS}
+      swift-username: ${SWIFT_USER_NAME}
+      swift-password: ${SWIFT_PASSWORD}
+      keystone-bootstrap-password: ${KEYSTONE_BOOTSTRAP_PASSWORD}
 
   - kind: ImageStream
     apiVersion: v1
@@ -67,10 +79,31 @@ objects:
         metadata:
           labels:
             app: swift-proxy
-          name: "swift-proxy"
+          name: swift-proxy
         spec:
           containers:
             - name: gluster-s3-gateway
+              env:
+                - name: KEYSTONEDB_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      key: keystonedb-password
+                      name: gluster-s3-gateway
+                - name: SWIFT_USER_NAME
+                  valueFrom:
+                    secretKeyRef:
+                      key: swift-username
+                      name: gluster-s3-gateway
+                - name: SWIFT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      key: swift-password
+                      name: gluster-s3-gateway
+                - name: KEYSTONE_BOOTSTRAP_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      key: keystone-bootstrap-password
+                      name: gluster-s3-gateway
               image: " "
               ports:
                 - containerPort: 8080
@@ -105,8 +138,123 @@ objects:
       resources:
         requests:
           storage: "${BUCKETS_CAPACITY}"
+      storageClassName: "${BUCKET_STORAGE_CLASS_NAME}"
+
+  # mariadb -----------------------------------------------------------------
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      annotations:
+        template.openshift.io/expose-password: '{.data[''database-password'']}'
+        template.openshift.io/expose-root_password: |
+          '{.data[''database-root-password'']}'
+      name: ${DATABASE_SERVICE_NAME}
+    stringData:
+      database-password: ${KEYSTONEDB_PASS}
+      database-root-password: ${MYSQL_ROOT_PASSWORD}
+
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      annotations:
+        template.openshift.io/expose-uri: |
+          mysql://{.spec.clusterIP}:{.spec.ports[?(.name=="mariadb")].port}
+      name: ${DATABASE_SERVICE_NAME}
+    spec:
+      ports:
+        - name: mariadb
+          port: 3306
+      selector:
+        name: ${DATABASE_SERVICE_NAME}
+
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: ${DATABASE_SERVICE_NAME}
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: ${VOLUME_CAPACITY}
+
+  - apiVersion: v1
+    kind: DeploymentConfig
+    metadata:
+      annotations:
+        template.alpha.openshift.io/wait-for-ready: 'true'
+      name: ${DATABASE_SERVICE_NAME}
+    spec:
+      replicas: 1
+      selector:
+        name: ${DATABASE_SERVICE_NAME}
+      strategy:
+        type: Recreate
+      template:
+        metadata:
+          labels:
+            name: ${DATABASE_SERVICE_NAME}
+        spec:
+          containers:
+            - env:
+                - name: MYSQL_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      key: database-password
+                      name: ${DATABASE_SERVICE_NAME}
+                - name: MYSQL_ROOT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      key: database-root-password
+                      name: ${DATABASE_SERVICE_NAME}
+                - name: MYSQL_USER
+                  value: keystone
+                - name: MYSQL_DATABASE
+                  value: keystone
+              image: ' '
+              imagePullPolicy: IfNotPresent
+              livenessProbe:
+                initialDelaySeconds: 30
+                tcpSocket:
+                  port: 3306
+                timeoutSeconds: 1
+              name: mariadb
+              ports:
+                - containerPort: 3306
+              readinessProbe:
+                exec:
+                  command:
+                    - /bin/sh
+                    - -i
+                    - -c
+                    - MYSQL_PWD="$MYSQL_USER" mysql -h 127.0.0.1
+                       -u "${MYSQL_USER}" -D "${MYSQL_PASSWORD}" -e 'SELECT 1'
+                initialDelaySeconds: 5
+                timeoutSeconds: 1
+              resources:
+                limits:
+                  memory: ${MEMORY_LIMIT}
+              volumeMounts:
+                - mountPath: /var/lib/mysql/data
+                  name: ${DATABASE_SERVICE_NAME}-data
+          volumes:
+            - name: ${DATABASE_SERVICE_NAME}-data
+              persistentVolumeClaim:
+                claimName: ${DATABASE_SERVICE_NAME}
+      triggers:
+        - imageChangeParams:
+            automatic: true
+            containerNames:
+              - mariadb
+            from:
+              kind: ImageStreamTag
+              name: mariadb:${MARIADB_VERSION}
+              namespace: ${NAMESPACE}
+          type: ImageChange
+        - type: ConfigChange
 
 parameters:
+  # swift-proxy -------------------------------------------------------------
   - name: SOURCE_REPOSITORY_URL
     displayName: Source Repository URL
     description: The URL of the repository with your application source code
@@ -121,6 +269,30 @@ parameters:
     description: Size of persistent volumes allocated for all buckets
     value: 30Gi
     required: true
+  - name: BUCKET_STORAGE_CLASS_NAME
+    displayName: Storage Class Name for Buckets
+    description: The name of the bucket's storage class to use. If unset,
+      the default storage class will be used. This should ideally point to
+      a glusterfs storage class.
+    required: false
+  - name: SWIFT_USER_NAME
+    displayName: User Name for Swift Service
+    description: |
+      The name of the user talking to the swift service. The ec2 credentials
+      will be generated for this user.
+    value: swiftadmin
+    required: true
+  - name: KEYSTONE_BOOTSTRAP_PASSWORD
+    displayName: Keystone Bootstrap Password
+    description: The administrator password for the keystone service.
+    from: '[a-zA-Z0-9]{16}'
+    generate: expression
+    required: true
+  - name: SWIFT_PASSWORD
+    displayName: Password for the Swift User
+    from: '[a-zA-Z0-9]{16}'
+    generate: expression
+    required: true
   - name: CONTEXT_DIR
     displayName: Context Directory
     description: |
@@ -132,4 +304,42 @@ parameters:
     displayName: Initial bucket name
     description: |
       Name of the initial bucket. If unset, no bucket will be created.
+
+  # mariadb -----------------------------------------------------------------
+  - description: Maximum amount of memory the container can use.
+    displayName: Memory Limit
+    name: MEMORY_LIMIT
+    required: true
+    value: 512Mi
+  - description: The OpenShift Namespace where the ImageStream resides.
+    displayName: Namespace
+    name: NAMESPACE
+    value: openshift
+  - description: The name of the OpenShift Service exposed for the database.
+    displayName: Database Service Name
+    name: DATABASE_SERVICE_NAME
+    required: true
+    value: gluseter-s3-gateway-db
+  - description: Password for the MariaDB connection user.
+    displayName: MariaDB Connection Password
+    from: '[a-zA-Z0-9]{16}'
+    generate: expression
+    name: KEYSTONEDB_PASS
+    required: true
+  - description: Password for the MariaDB root user.
+    displayName: MariaDB root Password
+    from: '[a-zA-Z0-9]{16}'
+    generate: expression
+    name: MYSQL_ROOT_PASSWORD
+    required: true
+  - description: Version of MariaDB image to be used (10.1, 10.2 or latest).
+    displayName: Version of MariaDB Image
+    name: MARIADB_VERSION
+    required: true
+    value: '10.2'
+  - description: Volume space available for data, e.g. 512Mi, 2Gi.
+    displayName: Volume Capacity
+    name: VOLUME_CAPACITY
+    required: true
+    value: 1Gi
 message: "TODO: lorem ipsum"

@@ -9,7 +9,7 @@ RUN yum-config-manager \
   --enable rh-gluster-3-client-for-rhel-7-server-rpms
 
 RUN yum install -y httpd python2-openstackclient iproute \
-        python2-swiftclient mod_wsgi mariadb mariadb-server \
+        python2-swiftclient mod_wsgi mariadb \
         openstack-keystone openstack-utils openstack-swift-proxy \
         openstack-swift-account openstack-swift-container \
         openstack-swift-object openstack-swift-plugin-swift3 \
@@ -48,8 +48,6 @@ RUN yumdownloader -t -y --enablerepo=rh-gluster-3-for-rhel-7-server-rpms \
 # TODO: remove
 RUN yum install -y vim less tcpdump
 ENV EDITOR=vim
-
-RUN systemctl enable mariadb httpd
 
 COPY gluster-s3-gateway-run.sh /run.sh
 RUN chmod +x /run.sh

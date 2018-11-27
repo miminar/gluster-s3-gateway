@@ -8,12 +8,18 @@ readonly DEFAULT_HEKETI_CLI_SERVER="http://heketi-storage.glusterfs.svc.cluster.
 KS_SERVICE_PORT="${KS_SERVICE_PORT:-35357}"
 KS_AUTH_PORT="${KS_AUTH_PORT:-5000}"
 #REGION="${REGION:-RegionOne}"
-REGION="${REGION:-US}"
 OBJECT_SERVICE_PORT="${OBJECT_SERVICE_PORT:-35791}"
 OBJECT_SERVICE_URI='http://localhost:8080/v1/AUTH_$(tenant_id)s'
 VOLUME_SIZE="${VOLUME_SIZE:-50}"
 HEKETI_CLI_USER="${HEKETI_CLI_USER:-admin}"
 HEKETI_CLI_SERVER="${HEKETI_CLI_SERVER:-$DEFAULT_HEKETI_CLI_SERVER}"
+MYSQL_HOST=""
+
+readonly USAGE="$(basename "${BASH_SOURCE[0]}") [-hn]
+
+Options:
+  -h   Show this message and exit.
+  -n   Do not setup gluster volume with heketi."
 
 function oskeystoneset() {
     openstack-config --set /etc/keystone/keystone.conf "$@"
@@ -37,23 +43,27 @@ function setup_env() {
 }
 
 function setup_mysql() {
-    systemctl start mariadb     # wait for mariadb to come up
-    if ! systemctl is-active mariadb; then
-        echo "mariadb failed to start" >&2
-        exit 1
+    if [[ -z "${MYSQL_HOST:-}" ]]; then
+        rpm -q  mariadb-server >/dev/null 2>&1 || yum install -y mariadb-server
+        systemctl start mariadb     # wait for mariadb to come up
+        if ! systemctl is-active mariadb; then
+            echo "mariadb failed to start" >&2
+            exit 1
+        fi
+        mysqladmin --user=root password "${MYSQL_ADMIN_PASS}"
+        mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="CREATE DATABASE keystone"
+        mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="GRANT ALL PRIVILEGES \
+            ON keystone.* TO 'keystone'@'localhost' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
+        mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="GRANT ALL PRIVILEGES \
+            ON keystone.* TO 'keystone'@'%' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
+    else
+        MYSQL_HOST=localhost
     fi
-    mysqladmin --user=root password "${MYSQL_ADMIN_PASS}"
-    mysql -p"${MYSQL_ADMIN_PASS}" --execute="CREATE DATABASE keystone"
-    mysql -p"${MYSQL_ADMIN_PASS}" --execute="GRANT ALL PRIVILEGES \
-        ON keystone.* TO 'keystone'@'localhost' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
-    mysql -p"${MYSQL_ADMIN_PASS}" --execute="GRANT ALL PRIVILEGES \
-        ON keystone.* TO 'keystone'@'%' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
 }
-
 
 function setup_keystone() {
     oskeystoneset database connection \
-        "mysql+pymysql://keystone:${KEYSTONEDB_PASS}@localhost/keystone"
+        "mysql+pymysql://keystone:${KEYSTONEDB_PASS}@${MYSQL_HOST}/keystone"
     oskeystoneset token provider fernet
     oskeystoneset signing token_format UUID
     # TODO remove
@@ -209,22 +219,23 @@ endpoint = awscli_plugin_endpoint
 EOF
 }
 
-function new() {
-    [[ -z "${ADMIN_TOKEN:-}" ]] && export ADMIN_TOKEN="$(openssl rand -hex 10)"
-    export OS_USERNAME="${OS_USERNAME:-admin}"
-    [[ -z "${OS_PASSWORD:-}" ]] && export OS_PASSWORD="$(openssl rand -hex 10)"
-    export OS_TENANT_NAME="${OS_TENANT_NAME:-admin}"
-    export OS_AUTH_URL="https://127.0.0.1:5000/v2.0/"
-    export SERVICE_ENDPOINT="https://127.0.0.1:${KS_SERVICE_PORT}/v2.0/"
-    export SERVICE_TOKEN="${ADMIN_TOKEN}"
-    openstack-db --service keystone --init
-}
+volume_setup=1
 
-set -x
+while getopts "hn" opt; do
+    case "${opt}" in
+    h) echo "${USAGE}"; exit 0; ;;
+    n) volume_setup=0; ;;
+    *)
+        echo "See help!" >&2
+        exit 1
+        ;;
+    esac
+done
+
 setup_env
 setup_mysql
 setup_keystone
 setup_openstack
-setup_gluster_volume
+[[ "${volume_setup}" == 1 ]] && setup_gluster_volume
 setup_swift "$ADMIN_ID"
 setup_s3cmd
