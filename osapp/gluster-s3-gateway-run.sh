@@ -42,24 +42,25 @@ function setup_env() {
 }
 
 function setup_mysql() {
-    if [[ -z "${MYSQL_HOST:-}" ]]; then
-        rpm -q  mariadb-server >/dev/null 2>&1 || yum install -y mariadb-server
-        systemctl start mariadb     # wait for mariadb to come up
-        if ! systemctl is-active mariadb; then
-            echo "mariadb failed to start" >&2
-            exit 1
-        fi
-        mysqladmin --user=root password "${MYSQL_ADMIN_PASS}"
-        mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="CREATE DATABASE keystone"
-        mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="GRANT ALL PRIVILEGES \
-            ON keystone.* TO 'keystone'@'localhost' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
-        mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="GRANT ALL PRIVILEGES \
-            ON keystone.* TO 'keystone'@'%' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
-    elif [[ -n "${GLUSTER_S3_GATEWAY_DB_PORT:-}" ]]; then
+    [[ -n "${MYSQL_HOST:-}" ]] && return 0
+    if [[ -n "${GLUSTER_S3_GATEWAY_DB_PORT:-}" ]]; then
         MYSQL_HOST="${GLUSTER_S3_GATEWAY_DB_PORT##*://}"
-    else
-        MYSQL_HOST=localhost
+        return 0
     fi
+
+    rpm -q  mariadb-server >/dev/null 2>&1 || yum install -y mariadb-server
+    systemctl start mariadb     # wait for mariadb to come up
+    if ! systemctl is-active mariadb; then
+        echo "mariadb failed to start" >&2
+        exit 1
+    fi
+    mysqladmin --user=root password "${MYSQL_ADMIN_PASS}"
+    mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="CREATE DATABASE keystone"
+    mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="GRANT ALL PRIVILEGES \
+        ON keystone.* TO 'keystone'@'localhost' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
+    mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="GRANT ALL PRIVILEGES \
+        ON keystone.* TO 'keystone'@'%' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
+    MYSQL_HOST=localhost
 }
 
 function setup_keystone() {

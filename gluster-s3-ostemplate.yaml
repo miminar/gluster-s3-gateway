@@ -138,7 +138,7 @@ objects:
       resources:
         requests:
           storage: "${BUCKETS_CAPACITY}"
-      storageClassName: "${BUCKET_STORAGE_CLASS_NAME}"
+      storageClassName: ${BUCKET_STORAGE_CLASS_NAME}
 
   # mariadb -----------------------------------------------------------------
   - apiVersion: v1
@@ -279,7 +279,8 @@ parameters:
     description: The name of the bucket's storage class to use. If unset,
       the default storage class will be used. This should ideally point to
       a glusterfs storage class.
-    required: false
+    required: true
+    value: glusterfs-storage
   - name: SWIFT_USER_NAME
     displayName: User Name for Swift Service
     description: |
