@@ -7,8 +7,7 @@ readonly DEFAULT_HEKETI_CLI_SERVER="http://heketi-storage.glusterfs.svc.cluster.
 
 KS_SERVICE_PORT="${KS_SERVICE_PORT:-35357}"
 KS_AUTH_PORT="${KS_AUTH_PORT:-5000}"
-#REGION="${REGION:-RegionOne}"
-OBJECT_SERVICE_PORT="${OBJECT_SERVICE_PORT:-35791}"
+REGION="${REGION:-US}"
 OBJECT_SERVICE_URI='http://localhost:8080/v1/AUTH_$(tenant_id)s'
 VOLUME_SIZE="${VOLUME_SIZE:-50}"
 HEKETI_CLI_USER="${HEKETI_CLI_USER:-admin}"
@@ -56,6 +55,8 @@ function setup_mysql() {
             ON keystone.* TO 'keystone'@'localhost' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
         mysql -p"${MYSQL_ADMIN_PASS}" -h "${MYSQL_HOST}" --execute="GRANT ALL PRIVILEGES \
             ON keystone.* TO 'keystone'@'%' IDENTIFIED BY '${KEYSTONEDB_PASS}'"
+    elif [[ -n "${GLUSTER_S3_GATEWAY_DB_PORT:-}" ]]; then
+        MYSQL_HOST="${GLUSTER_S3_GATEWAY_DB_PORT##*://}"
     else
         MYSQL_HOST=localhost
     fi

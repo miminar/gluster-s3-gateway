@@ -227,8 +227,8 @@ objects:
                     - /bin/sh
                     - -i
                     - -c
-                    - MYSQL_PWD="$MYSQL_USER" mysql -h 127.0.0.1
-                       -u "${MYSQL_USER}" -D "${MYSQL_PASSWORD}" -e 'SELECT 1'
+                    - env MYSQL_PWD="$MYSQL_PASSWORD" mysql -h 127.0.0.1
+                       -u "${MYSQL_USER}" -D "${MYSQL_DATABASE}" -e 'SELECT 1'
                 initialDelaySeconds: 5
                 timeoutSeconds: 1
               resources:
@@ -237,6 +237,11 @@ objects:
               volumeMounts:
                 - mountPath: /var/lib/mysql/data
                   name: ${DATABASE_SERVICE_NAME}-data
+          securityContext:
+            # mysql user
+            runAsUser: 27 
+            # mysql group
+            fsGroup: 27
           volumes:
             - name: ${DATABASE_SERVICE_NAME}-data
               persistentVolumeClaim:
@@ -249,7 +254,7 @@ objects:
             from:
               kind: ImageStreamTag
               name: mariadb:${MARIADB_VERSION}
-              namespace: ${NAMESPACE}
+              namespace: ${STREAMS_NAMESPACE}
           type: ImageChange
         - type: ConfigChange
 
@@ -306,20 +311,20 @@ parameters:
       Name of the initial bucket. If unset, no bucket will be created.
 
   # mariadb -----------------------------------------------------------------
-  - description: Maximum amount of memory the container can use.
-    displayName: Memory Limit
+  - description: Maximum amount of memory the database container can use.
+    displayName: Database Memory Limit
     name: MEMORY_LIMIT
     required: true
     value: 512Mi
   - description: The OpenShift Namespace where the ImageStream resides.
-    displayName: Namespace
-    name: NAMESPACE
+    displayName: Streams Namespace
+    name: STREAMS_NAMESPACE
     value: openshift
   - description: The name of the OpenShift Service exposed for the database.
     displayName: Database Service Name
     name: DATABASE_SERVICE_NAME
     required: true
-    value: gluseter-s3-gateway-db
+    value: gluster-s3-gateway-db
   - description: Password for the MariaDB connection user.
     displayName: MariaDB Connection Password
     from: '[a-zA-Z0-9]{16}'
